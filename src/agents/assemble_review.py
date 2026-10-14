@@ -4,16 +4,17 @@ from datetime import datetime
 from src.llm import call_llm
 from src.db.db_helper import get_conn, get_source
 from src.schemas import ReviewSpec
+from src.agents.language_utils import abstract_language_instruction
 
 
 ABSTRACT_SYSTEM = (
     "You are an academic review abstract writer. "
-    "Given a review specification and the four section drafts, write a single structured abstract. "
-    "Output plain Chinese prose, no heading, no markdown. "
-    "Do NOT fabricate data. Only use facts that appear in the provided drafts."
+    "Write the abstract according to the language instruction provided in the user prompt. "
+    "Do NOT fabricate data. Only use facts that appear in the provided drafts. "
+    "Output plain prose, no headings, no markdown."
 )
 
-ABSTRACT_PROMPT = """请根据以下综述信息，撰写一段结构化摘要（250-350字）。
+ABSTRACT_PROMPT = """请根据以下综述信息，撰写一段结构化摘要（250-350字，或英文 250-350 词）。
 
 综述标题：{review_title}
 摘要要求覆盖：{abstract_requirements}
@@ -21,17 +22,17 @@ ABSTRACT_PROMPT = """请根据以下综述信息，撰写一段结构化摘要�
 第1节（引言）正文：
 {section1}
 
-第2节（发现与临床前研究）正文：
+第2节正文：
 {section2}
 
-第3节（研发历程）正文：
+第3节正文：
 {section3}
 
-第4节（未来前景与挑战）正文：
+第4节正文：
 {section4}
 
 要求：
-1. 摘要需覆盖以下要点：抑郁症的全球趋势与发病机制概况、抗抑郁药研发的主要机制方向、JS1-1-01片的研发现状与已注册临床证据、JS1-1-01片面临的主要挑战与证据缺口。
+1. 摘要需覆盖以下要点：背景与全球负担、核心机制/主题、本研究综述对象的研发现状、主要挑战与证据缺口。
 2. 不得写入正文中未出现的具体数字或事实。
 3. 语言学术、客观、简洁。
 4. 只输出摘要正文，不加"摘要："前缀，不加 markdown。
@@ -89,8 +90,8 @@ def _format_reference(sid: str, source: dict, index: int) -> str:
         nct = source.get("nct_id") or sid.replace("ct_", "")
         title = source.get("title") or source.get("official_title") or ""
         url = source.get("url") or ""
-        return "{0}. {1}. ClinicalTrials.gov identifier: {2}. {3}. Available from: {4}".format(
-            index, author_str, nct, title, url
+        return "{0}. {1}. {2}. ClinicalTrials.gov identifier: {3}. Available from: {4}".format(
+            index, author_str, title, nct, url
         )
     else:
         title = source.get("title") or ""
@@ -118,6 +119,8 @@ def generate_abstract(spec, drafts):
         section3=drafts.get(3, "")[:2000],
         section4=drafts.get(4, "")[:2000],
     )
+    lang_instr = abstract_language_instruction(spec.language)
+    prompt = prompt + "\n\nLanguage requirement:\n" + lang_instr
     return call_llm(prompt, system=ABSTRACT_SYSTEM, temperature=0.3).strip()
 
 
@@ -130,10 +133,8 @@ def assemble(output_path="data/review_output.md"):
     print("Generating abstract...")
     abstract = generate_abstract(spec, drafts)
 
-    # Collect all cited source_ids across abstract + drafts
     all_text = abstract + "\n" + "\n".join(drafts.values())
     cited_ids = _extract_all_cited_source_ids(all_text)
-    # Deduplicate while preserving order
     seen = set()
     ordered_ids = []
     for sid in cited_ids:
@@ -143,7 +144,6 @@ def assemble(output_path="data/review_output.md"):
 
     print("Cited sources: {0}".format(len(ordered_ids)))
 
-    # Build reference list
     references = []
     for i, sid in enumerate(ordered_ids, 1):
         src = get_source(sid)
@@ -152,23 +152,21 @@ def assemble(output_path="data/review_output.md"):
             continue
         references.append(_format_reference(sid, src, i))
 
-    # Build markdown
     lines = []
     lines.append("# {0}".format(spec.review_title))
     lines.append("")
-    lines.append("*生成时间：{0}*".format(datetime.now().strftime("%Y-%m-%d")))
+    lines.append("*Generated: {0}*".format(datetime.now().strftime("%Y-%m-%d")))
     lines.append("")
-    lines.append("## 摘要")
+    lines.append("## 摘要" if "中文" in (spec.language or "") else "## Abstract")
     lines.append("")
     lines.append(abstract)
     lines.append("")
 
-    # Keywords
     keywords = list(spec.core_entities) + list(spec.background_topics)[:3]
-    lines.append("**关键词：** {0}".format("；".join(keywords)))
+    kw_label = "**关键词：**" if "中文" in (spec.language or "") else "**Keywords:**"
+    lines.append("{0} {1}".format(kw_label, "; ".join(keywords)))
     lines.append("")
 
-    # Sections
     for section in spec.sections:
         content = drafts.get(section.number, "")
         if not content:
@@ -178,8 +176,8 @@ def assemble(output_path="data/review_output.md"):
         lines.append(content)
         lines.append("")
 
-    # References
-    lines.append("## 参考文献")
+    ref_header = "## 参考文献" if "中文" in (spec.language or "") else "## References"
+    lines.append(ref_header)
     lines.append("")
     for ref in references:
         lines.append("{0}".format(ref))

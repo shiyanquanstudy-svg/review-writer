@@ -3,6 +3,7 @@ from src.llm import call_llm
 from src.db.db_helper import get_conn, get_source
 from src.schemas import ReviewSpec
 from src.agents.rank_sources import rank_all
+from src.agents.language_utils import writer_language_instruction
 
 
 WRITER_SYSTEM_PROMPT = (
@@ -15,7 +16,7 @@ WRITER_SYSTEM_PROMPT = (
     "- Only use source_ids from the provided lists. Do NOT invent source_ids.\n"
     "- If a key point has no Category A evidence, use Category B but explicitly frame it as class-level data, and note that core-entity-specific evidence is pending.\n"
     "- Do NOT write specific numbers, dates, or findings that are not present in the provided sources.\n"
-    "- Write in formal academic Chinese.\n"
+    "- Follow the language instruction provided in the user prompt.\n"
     "- Output plain prose paragraphs. Do NOT include section headings or markdown."
 )
 
@@ -25,6 +26,8 @@ SECTION_WRITER_PROMPT = """请为以下综述撰写第 {section_number} 节。
 综述类型：{review_type}
 目标读者：{target_audience}
 综述核心实体：{core_entities}
+
+语言要求：{language_instruction}
 
 第 {section_number} 节：{section_title}
 本节中心论点：{thesis}
@@ -45,7 +48,7 @@ SECTION_WRITER_PROMPT = """请为以下综述撰写第 {section_number} 节。
 2. B 类源只能用于讨论"该类"或"领域趋势"等类层面内容，不得把其他对象的数据、结论安到核心实体头上。
 3. 若某要点没有 A 类证据，可以用 B 类支撑，但必须在文中明确写出"该类数据显示……{core_entities} 的同类数据尚未公开发表"之类的表述，并如实说明证据缺口。
 4. 每段末尾附一个引用汇总，格式：[Sources: pubmed_xxx, pubmed_yyy]。
-5. 目标长度约 {estimated_words} 字。
+5. 目标长度约 {estimated_words} 字（英文按对应词数）。
 6. 只输出正文，不含标题、不含"第 X 节"字样、不含 markdown 标题。
 7. 【前后一致性】在讨论"证据缺口"时，必须区分"机制/临床前证据缺失"与"临床注册信息已有"等不同证据类型，不得笼统否定已有证据的存在。
 8. 【数字必引】任何包含具体数值（IC50、nM、百分比、入组例数、年数、剂量）或具体实验结果（如"在悬尾实验中减少不动时间"）的句子，句末必须紧跟其来源 [source_id]。若来源不在 A/B 类清单中，则改用定性描述，不得写出具体数值。禁止出现无 [source_id] 标注的具体数字。
@@ -57,11 +60,6 @@ SECTION_WRITER_PROMPT = """请为以下综述撰写第 {section_number} 节。
 
 
 def _is_direct_evidence(source_id: str, source_data: dict, spec: ReviewSpec) -> bool:
-    """A source is 'direct evidence' if:
-       - it is a registered clinical trial, OR
-       - its title mentions a CONCRETE core entity (drug code / compound name), OR
-       - the review's core entities are domain-level topics, in which case
-         any source assigned to this section counts as direct evidence."""
     if source_id.startswith("ct_"):
         return True
 
@@ -85,7 +83,6 @@ def _is_direct_evidence(source_id: str, source_data: dict, spec: ReviewSpec) -> 
                 return True
         return False
     else:
-        # Domain review: every assigned source is direct evidence
         return True
 
 
@@ -149,6 +146,7 @@ def write_section(spec: ReviewSpec, section_outline: dict, ranked_sources: list)
         sources_direct_block=direct_block,
         sources_context_block=context_block,
         estimated_words=section_outline.get("estimated_words", 600),
+        language_instruction=writer_language_instruction(spec.language),
     )
     return call_llm(prompt, system=WRITER_SYSTEM_PROMPT, temperature=0.4)
 

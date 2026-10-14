@@ -2,6 +2,7 @@ import json
 from src.llm import call_llm_json
 from src.db.db_helper import get_conn
 from src.schemas import ReviewSpec
+from src.agents.language_utils import outline_language_instruction
 
 
 SYSTEM_PROMPT = (
@@ -38,8 +39,7 @@ Generate a detailed outline for Section {section_number} as JSON:
   "thesis": "one sentence stating the central argument of this section",
   "key_points": [
     "point 1 (each point should be supportable by at least one source below)",
-    "point 2",
-    "..."
+    "point 2"
   ],
   "supporting_sources": ["source_id 1", "source_id 2"],
   "estimated_words": 600,
@@ -53,11 +53,13 @@ Rules:
 - estimated_words: Section 1 = 500-800, Section 2 = 600-900, Section 3 = 700-1000, Section 4 = 400-700.
 - key_points must be answerable using only the provided sources.
 
+Language requirement:
+{language_instruction}
+
 Output ONLY JSON."""
 
 
 def _normalize_sections(raw_sections) -> list:
-    """Coerce relevant_sections to a list of ints."""
     if raw_sections is None:
         return []
     if isinstance(raw_sections, (str, int)):
@@ -72,12 +74,9 @@ def _normalize_sections(raw_sections) -> list:
 
 
 def load_latest_spec() -> tuple:
-    """Load latest ReviewSpec from DB. Returns (spec, spec_id)."""
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute(
-        "SELECT id, spec_json FROM review_specs ORDER BY id DESC LIMIT 1"
-    )
+    cur.execute("SELECT id, spec_json FROM review_specs ORDER BY id DESC LIMIT 1")
     row = cur.fetchone()
     conn.close()
     if row is None:
@@ -86,10 +85,6 @@ def load_latest_spec() -> tuple:
 
 
 def load_extracted_sources() -> dict:
-    """Load all extracted_info, group by section number.
-
-    Returns: {section_number: [{"source_id": ..., "extracted": {...}}, ...]}
-    """
     conn = get_conn()
     cur = conn.cursor()
     cur.execute("SELECT source_id, extracted_json FROM extracted_info")
@@ -113,7 +108,6 @@ def load_extracted_sources() -> dict:
 
 
 def _format_sources_block(sources: list) -> str:
-    """Render source list into compact text for prompt."""
     if not sources:
         return "(no sources available for this section)"
 
@@ -123,7 +117,6 @@ def _format_sources_block(sources: list) -> str:
         ex = item["extracted"]
         study_type = ex.get("study_type", "unknown")
 
-        # Try to get key facts
         facts = ex.get("key_findings") or ex.get("key_facts") or []
         facts_text = " | ".join(facts[:3]) if facts else "(no key findings)"
 
@@ -148,6 +141,7 @@ def generate_section_outline(spec: ReviewSpec, section, sources: list) -> dict:
         section_focus=section.focus,
         key_questions=key_questions,
         sources_block=_format_sources_block(sources),
+        language_instruction=outline_language_instruction(spec.language),
     )
     return call_llm_json(prompt, system=SYSTEM_PROMPT, temperature=0.2)
 
