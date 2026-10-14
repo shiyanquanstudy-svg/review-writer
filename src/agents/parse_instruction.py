@@ -1,4 +1,5 @@
 from src.llm import call_llm_json
+from src.schemas import ReviewSpec
 
 SYSTEM_PROMPT = """你是一个学术综述撰写指令解析器。
 你的任务是把用户的自然语言指令解析为结构化 JSON。
@@ -30,20 +31,24 @@ USER_PROMPT_TEMPLATE = """请解析以下综述撰写指令：
 只输出 JSON。"""
 
 
-def parse_instruction(instruction: str) -> dict:
-    """将用户自然语言指令解析为结构化 ReviewSpec。"""
+def parse_instruction(instruction: str) -> ReviewSpec:
     prompt = USER_PROMPT_TEMPLATE.format(instruction=instruction)
-    spec = call_llm_json(prompt, system=SYSTEM_PROMPT, temperature=0.1)
-    return spec
+    raw = call_llm_json(prompt, system=SYSTEM_PROMPT, temperature=0.1)
+    return ReviewSpec(**raw)
 
 
 if __name__ == "__main__":
+    from src.db.db_helper import init_db, save_spec
+
+    init_db()
     test_instruction = """帮我撰写一个综述，临床三期抗抑郁药——JS1-1-01片的发展史。
     摘要主要从抑郁症的全球趋势，抑郁症的发病原因，药物研发主要从哪些机制展开，JS1-1-01片的作用机制有哪些创新点。
     1引言介绍抑郁症和JS1-1-01片的基本情况。
     2JS1-1-01片的发现与临床前研究。
     3JS1-1-01片的研发历程。
     4JS1-1-01片的未来前景与挑战。"""
-    import json
-    result = parse_instruction(test_instruction)
-    print(json.dumps(result, ensure_ascii=False, indent=2))
+
+    spec = parse_instruction(test_instruction)
+    rid = save_spec(test_instruction, spec.model_dump())
+    print(f"Saved spec id={rid}")
+    print(spec.model_dump_json(indent=2))
