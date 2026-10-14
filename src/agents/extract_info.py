@@ -17,13 +17,17 @@ REVIEW_SECTIONS = """The review has the following sections:
 - Section 3: Clinical development history of JS1-1-01
 - Section 4: Future prospects and challenges of JS1-1-01
 
-Your task is to assign each source to the review sections it directly supports.
-Use ONLY section numbers from this list.
-Be strict: most sources support only 1-2 sections.
-A background epidemiology paper likely supports Section 1.
-A preclinical study on SNDRI mechanism likely supports Section 2.
-A registered clinical trial of JS1-1-01 supports Section 3.
-A source discussing unmet needs or future directions supports Section 4."""
+Apply ALL of the following rules that match the source. A source can belong to MULTIPLE sections. Do NOT pick just one.
+
+Rules:
+1. Every registered clinical trial of JS1-1-01 MUST be assigned to Section 3 (it is a timeline event).
+2. A trial that is NOT completed, OR that has notable methodological uncertainty (small sample, single site, unvalidated endpoint), MUST ALSO be assigned to Section 4.
+3. A Phase 1 or Phase 1b safety/PK trial in healthy subjects MUST ALSO be assigned to Section 2 (it bridges preclinical and clinical).
+4. A background epidemiology, depression etiology, or biomarker paper MUST be assigned to Section 1.
+5. A preclinical or animal-model study of SNDRI-class drugs or antidepressant mechanisms MUST be assigned to Section 2.
+6. A review of unmet needs, future directions, or antidepressant development challenges MUST be assigned to Section 4.
+
+Use ONLY section numbers from the list. Be inclusive when a rule matches."""
 
 CLINICALTRIAL_PROMPT = """Extract structured information from this clinical trial registration.
 
