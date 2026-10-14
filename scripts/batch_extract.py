@@ -2,21 +2,17 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import sqlite3
-from src.config import DB_PATH
+from src.db.db_helper import get_conn
 from src.agents.extract_info import extract_and_save
 
 
 def get_unextracted_pubmed_ids(limit=None):
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
+    conn = get_conn()
     cur = conn.cursor()
     cur.execute("""
-        SELECT s.source_id
-        FROM sources s
+        SELECT s.source_id FROM sources s
         LEFT JOIN extracted_info e ON s.source_id = e.source_id
-        WHERE e.source_id IS NULL
-          AND s.source_id LIKE 'pubmed_%'
+        WHERE e.source_id IS NULL AND s.source_id LIKE 'pubmed_%'
         ORDER BY s.source_id
     """)
     ids = [r["source_id"] for r in cur.fetchall()]
@@ -45,7 +41,9 @@ def main():
                 print("  [{0}/{1}] {2} -> sections {3}".format(i, len(pending), sid, sections))
                 success += 1
         except Exception as e:
+            import traceback
             print("  [{0}/{1}] {2} EXCEPTION: {3}".format(i, len(pending), sid, e))
+            traceback.print_exc()
 
     print("\nSuccess: {0}/{1}".format(success, len(pending)))
 

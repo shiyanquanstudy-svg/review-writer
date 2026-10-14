@@ -16,20 +16,32 @@ def init_db():
     pass
 
 
-JSON_FIELDS = {"spec_json", "extracted_json", "raw_json", "citations_json"}
+JSON_FIELDS_IN_CURSOR = {"spec_json", "extracted_json", "citations_json"}
 
 
-def _stringify(row: dict) -> dict:
-    """Convert JSONB (parsed dict) back to strings for sqlite3-compatible downstream code."""
+def _stringify_cursor_row(row: dict) -> dict:
+    """Cursor rows: convert JSONB dicts to strings, because downstream code calls json.loads() on them."""
     if not isinstance(row, dict):
         return row
     out = {}
     for k, v in row.items():
-        if k in JSON_FIELDS and not isinstance(v, str):
+        if k in JSON_FIELDS_IN_CURSOR and not isinstance(v, str):
             out[k] = json.dumps(v, ensure_ascii=False)
         else:
             out[k] = v
     return out
+
+
+def _get_pubmed_source_ids() -> set:
+    client = _get_client()
+    res = client.table("sources").select("source_id").execute()
+    return {r["source_id"] for r in res.data if (r.get("source_id") or "").startswith("pubmed_")}
+
+
+def _get_extracted_source_ids() -> set:
+    client = _get_client()
+    res = client.table("extracted_info").select("source_id").execute()
+    return {r["source_id"] for r in res.data}
 
 
 class _SupabaseCursor:
@@ -101,18 +113,14 @@ class _SupabaseCursor:
         # ---------- SELECTs ----------
 
         if "COUNT(*)" in s and "extracted_info" in s and "sources" in s:
-            res = self._client.table("sources").select("source_id").like("source_id", "pubmed_%").execute()
-            all_ids = {r["source_id"] for r in res.data}
-            res2 = self._client.table("extracted_info").select("source_id").execute()
-            done = {r["source_id"] for r in res2.data}
+            all_ids = _get_pubmed_source_ids()
+            done = _get_extracted_source_ids()
             self._rows = [{"n": len(all_ids - done)}]
             return
 
         if "SELECT s.source_id FROM sources" in s:
-            res = self._client.table("sources").select("source_id").like("source_id", "pubmed_%").execute()
-            all_ids = {r["source_id"] for r in res.data}
-            res2 = self._client.table("extracted_info").select("source_id").execute()
-            done = {r["source_id"] for r in res2.data}
+            all_ids = _get_pubmed_source_ids()
+            done = _get_extracted_source_ids()
             self._rows = [{"source_id": sid} for sid in sorted(all_ids - done)]
             return
 
@@ -181,10 +189,10 @@ class _SupabaseCursor:
     def fetchone(self):
         if not self._rows:
             return None
-        return _stringify(self._rows[0])
+        return _stringify_cursor_row(self._rows[0])
 
     def fetchall(self):
-        return [_stringify(r) for r in self._rows]
+        return [_stringify_cursor_row(r) for r in self._rows]
 
     def close(self):
         pass
@@ -214,7 +222,7 @@ def get_conn():
 
 
 # =====================================================================
-# Direct helpers
+# Direct helpers (return types match sqlite_db_helper)
 # =====================================================================
 
 def save_spec(instruction: str, spec_dict: dict) -> int:
@@ -275,21 +283,23 @@ def get_all_source_ids() -> list:
 
 
 def get_source(source_id: str):
+    """Returns dict, matching sqlite_db_helper.get_source() behavior."""
     client = _get_client()
     res = client.table("sources").select("raw_json").eq("source_id", source_id).execute()
-    if res.data:
-        raw = res.data[0]["raw_json"]
-        return raw if isinstance(raw, str) else json.dumps(raw, ensure_ascii=False)
-    return None
+    if not res.data:
+        return None
+    raw = res.data[0]["raw_json"]
+    return raw if isinstance(raw, dict) else json.loads(raw)
 
 
 def get_sources_by_type(source_type: str) -> list:
+    """Returns list of dicts, matching sqlite_db_helper behavior."""
     client = _get_client()
     res = client.table("sources").select("raw_json").eq("source_type", source_type).execute()
     out = []
     for r in res.data:
         raw = r["raw_json"]
-        out.append(raw if isinstance(raw, str) else json.dumps(raw, ensure_ascii=False))
+        out.append(raw if isinstance(raw, dict) else json.loads(raw))
     return out
 
 
