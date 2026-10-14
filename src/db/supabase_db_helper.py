@@ -13,14 +13,24 @@ def _get_client() -> Client:
 
 
 def init_db():
-    """Tables are created via Supabase SQL Editor; no-op here."""
     pass
 
 
-# =====================================================================
-# Cursor shim: emulates sqlite3.Cursor for the specific SQL patterns
-# used in this project, dispatching to Supabase REST API.
-# =====================================================================
+JSON_FIELDS = {"spec_json", "extracted_json", "raw_json", "citations_json"}
+
+
+def _stringify(row: dict) -> dict:
+    """Convert JSONB (parsed dict) back to strings for sqlite3-compatible downstream code."""
+    if not isinstance(row, dict):
+        return row
+    out = {}
+    for k, v in row.items():
+        if k in JSON_FIELDS and not isinstance(v, str):
+            out[k] = json.dumps(v, ensure_ascii=False)
+        else:
+            out[k] = v
+    return out
+
 
 class _SupabaseCursor:
     def __init__(self, client):
@@ -90,7 +100,6 @@ class _SupabaseCursor:
 
         # ---------- SELECTs ----------
 
-        # Count pending pubmed
         if "COUNT(*)" in s and "extracted_info" in s and "sources" in s:
             res = self._client.table("sources").select("source_id").like("source_id", "pubmed_%").execute()
             all_ids = {r["source_id"] for r in res.data}
@@ -99,7 +108,6 @@ class _SupabaseCursor:
             self._rows = [{"n": len(all_ids - done)}]
             return
 
-        # Pending pubmed ids
         if "SELECT s.source_id FROM sources" in s:
             res = self._client.table("sources").select("source_id").like("source_id", "pubmed_%").execute()
             all_ids = {r["source_id"] for r in res.data}
@@ -108,7 +116,6 @@ class _SupabaseCursor:
             self._rows = [{"source_id": sid} for sid in sorted(all_ids - done)]
             return
 
-        # Extracted + title join (rank_sources)
         if "e.extracted_json" in s and "s.title" in s:
             res = self._client.table("extracted_info").select("source_id, extracted_json").execute()
             result_rows = []
@@ -124,19 +131,16 @@ class _SupabaseCursor:
             self._rows = result_rows
             return
 
-        # All extracted_info WITH source_id
         if "SELECT source_id, extracted_json FROM extracted_info" in s and "WHERE" not in s:
             res = self._client.table("extracted_info").select("source_id, extracted_json").execute()
             self._rows = [{"source_id": r["source_id"], "extracted_json": r["extracted_json"]} for r in res.data]
             return
 
-        # All extracted_info (json only)
         if "SELECT extracted_json FROM extracted_info" in s and "WHERE" not in s:
             res = self._client.table("extracted_info").select("extracted_json").execute()
             self._rows = [{"extracted_json": r["extracted_json"]} for r in res.data]
             return
 
-        # Single extracted_info by source_id
         if "FROM extracted_info WHERE source_id" in s:
             sid = params[0] if params else None
             if sid is None:
@@ -146,14 +150,12 @@ class _SupabaseCursor:
             self._rows = [{"extracted_json": r["extracted_json"]} for r in res.data]
             return
 
-        # Latest spec (id + spec_json)
         if "FROM review_specs" in s and "ORDER BY id DESC LIMIT 1" in s:
             res = self._client.table("review_specs").select("id, spec_json").order("id", desc=True).limit(1).execute()
             if res.data:
                 self._rows = [{"id": res.data[0]["id"], "spec_json": res.data[0]["spec_json"]}]
             return
 
-        # Latest draft content by section_number
         if "FROM drafts WHERE section_number" in s and "ORDER BY id DESC LIMIT 1" in s:
             sec = params[0] if params else None
             res = self._client.table("drafts").select("content").eq("section_number", sec).order("id", desc=True).limit(1).execute()
@@ -161,7 +163,6 @@ class _SupabaseCursor:
                 self._rows = [{"content": res.data[0]["content"]}]
             return
 
-        # Latest drafts per section (assemble_review)
         if "FROM drafts" in s and "MAX(id)" in s:
             res = self._client.table("drafts").select("id, section_number, content").order("id", desc=True).execute()
             seen = set()
@@ -178,10 +179,12 @@ class _SupabaseCursor:
         raise NotImplementedError("Unsupported SQL in Supabase shim: " + s[:150])
 
     def fetchone(self):
-        return self._rows[0] if self._rows else None
+        if not self._rows:
+            return None
+        return _stringify(self._rows[0])
 
     def fetchall(self):
-        return self._rows
+        return [_stringify(r) for r in self._rows]
 
     def close(self):
         pass
@@ -211,7 +214,7 @@ def get_conn():
 
 
 # =====================================================================
-# Direct helpers (bypass cursor; used by agents)
+# Direct helpers
 # =====================================================================
 
 def save_spec(instruction: str, spec_dict: dict) -> int:
@@ -275,14 +278,19 @@ def get_source(source_id: str):
     client = _get_client()
     res = client.table("sources").select("raw_json").eq("source_id", source_id).execute()
     if res.data:
-        return res.data[0]["raw_json"]
+        raw = res.data[0]["raw_json"]
+        return raw if isinstance(raw, str) else json.dumps(raw, ensure_ascii=False)
     return None
 
 
 def get_sources_by_type(source_type: str) -> list:
     client = _get_client()
     res = client.table("sources").select("raw_json").eq("source_type", source_type).execute()
-    return [r["raw_json"] for r in res.data]
+    out = []
+    for r in res.data:
+        raw = r["raw_json"]
+        out.append(raw if isinstance(raw, str) else json.dumps(raw, ensure_ascii=False))
+    return out
 
 
 def _ensure_column(table: str, column: str, coltype: str):
