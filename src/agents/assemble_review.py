@@ -124,7 +124,7 @@ def generate_abstract(spec, drafts):
     return call_llm(prompt, system=ABSTRACT_SYSTEM, temperature=0.3).strip()
 
 
-def assemble(output_path="data/review_output.md"):
+def assemble(output_path="data/review_output.md", with_figures=True):
     spec, spec_id = _load_latest_spec()
     drafts = _load_latest_drafts()
 
@@ -132,6 +132,16 @@ def assemble(output_path="data/review_output.md"):
 
     print("Generating abstract...")
     abstract = generate_abstract(spec, drafts)
+
+    # ---------- Figures ----------
+    figures = {}
+    if with_figures:
+        try:
+            from src.agents.generate_figures import generate_all_figures
+            print("Generating figures...")
+            figures = generate_all_figures(drafts, spec.language, spec.review_title)
+        except Exception as e:
+            print("Figure generation skipped: {0}".format(e))
 
     all_text = abstract + "\n" + "\n".join(drafts.values())
     cited_ids = _extract_all_cited_source_ids(all_text)
@@ -152,31 +162,52 @@ def assemble(output_path="data/review_output.md"):
             continue
         references.append(_format_reference(sid, src, i))
 
+    is_cn = "中文" in (spec.language or "")
+
     lines = []
     lines.append("# {0}".format(spec.review_title))
     lines.append("")
     lines.append("*Generated: {0}*".format(datetime.now().strftime("%Y-%m-%d")))
     lines.append("")
-    lines.append("## 摘要" if "中文" in (spec.language or "") else "## Abstract")
+
+    # Abstract
+    lines.append("## 摘要" if is_cn else "## Abstract")
     lines.append("")
     lines.append(abstract)
     lines.append("")
 
     keywords = list(spec.core_entities) + list(spec.background_topics)[:3]
-    kw_label = "**关键词：**" if "中文" in (spec.language or "") else "**Keywords:**"
+    kw_label = "**关键词：**" if is_cn else "**Keywords:**"
     lines.append("{0} {1}".format(kw_label, "; ".join(keywords)))
     lines.append("")
 
+    # Sections with figures
     for section in spec.sections:
         content = drafts.get(section.number, "")
         if not content:
             continue
         lines.append("## {0}. {1}".format(section.number, section.title))
         lines.append("")
+
+        # Insert classification figure right after Section 2 heading
+        if section.number == 2 and "classification" in figures:
+            lines.append("![Classification of tau PET tracers]({0})".format(figures["classification"]))
+            lines.append("")
+            lines.append("*Figure 1. Auto-generated classification tree (verify before use).*")
+            lines.append("")
+
         lines.append(content)
         lines.append("")
 
-    ref_header = "## 参考文献" if "中文" in (spec.language or "") else "## References"
+        # Insert timeline figure right after Section 3
+        if section.number == 3 and "timeline" in figures:
+            lines.append("![Development timeline]({0})".format(figures["timeline"]))
+            lines.append("")
+            lines.append("*Figure 2. Auto-generated development timeline (verify before use).*")
+            lines.append("")
+
+    # References
+    ref_header = "## 参考文献" if is_cn else "## References"
     lines.append(ref_header)
     lines.append("")
     for ref in references:
@@ -192,6 +223,8 @@ def assemble(output_path="data/review_output.md"):
 
     print("Written to {0}".format(out.resolve()))
     print("Total length: {0} chars".format(len(markdown)))
+    if figures:
+        print("Figures embedded: {0}".format(", ".join(figures.keys())))
     return markdown
 
 

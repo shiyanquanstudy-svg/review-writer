@@ -4,3 +4,4 @@ streamlit
 openai
 pydantic
 tenacity
+matplotlib
