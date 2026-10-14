@@ -36,7 +36,11 @@ For each source, assign a relevance score from 0 to 10:
 - 1-3 = tangential, only loosely related
 - 0 = unrelated (e.g. different drug, different disease, different topic)
 
-Also flag any source where the drug or entity in the source appears to be a DIFFERENT compound than the review's core entity (this is a critical safety check).
+Flag a source as entity mismatch ONLY if:
+- The source is about a compound that could be CONFUSED with the review's core entity (same drug class AND same indication AND similar naming), OR
+- The source was mistakenly retrieved as if it were about the core entity itself.
+
+Do NOT flag a source merely because it studies a DIFFERENT drug in the same class. Studies of other SNDRI-class drugs are VALID background sources (Category B) and must NOT be flagged. Examples that should NOT be flagged: toludesvenlafaxine, LPM580153, SKF83959, bupropion.
 
 Output JSON in this exact format:
 {{
