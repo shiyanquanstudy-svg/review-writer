@@ -35,7 +35,6 @@ def run_search(spec: ReviewSpec, spec_id: int = None) -> dict:
                 mindate, maxdate = _parse_time_range(task.get("time_range", ""))
                 records = search_and_fetch(keywords, max_results, mindate, maxdate)
 
-            # Save to DB
             saved_count = save_many_sources(records)
             if spec_id is not None:
                 save_search_run(spec_id, task_id, database, keywords, len(records))
@@ -59,22 +58,25 @@ def run_search(spec: ReviewSpec, spec_id: int = None) -> dict:
 
 
 if __name__ == "__main__":
-    from src.agents.parse_instruction import parse_instruction
-    from src.db.db_helper import init_db
+    import sys
+    import json
+    from src.db.db_helper import init_db, get_conn
+    from src.schemas import ReviewSpec
 
     init_db()
 
-    test_instruction = (
-        "Help me write a review on the development history of JS1-1-01, "
-        "a phase 3 antidepressant drug. The abstract should cover global depression trends, "
-        "causes of depression, major antidepressant mechanisms, and JS1-1-01's innovation. "
-        "Section 1: Introduction to depression and JS1-1-01. "
-        "Section 2: Discovery and preclinical studies of JS1-1-01. "
-        "Section 3: Clinical development history of JS1-1-01. "
-        "Section 4: Future prospects and challenges of JS1-1-01."
-    )
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT spec_json FROM review_specs ORDER BY id DESC LIMIT 1")
+    row = cur.fetchone()
+    conn.close()
 
-    spec = parse_instruction(test_instruction)
+    if row is None:
+        print("No ReviewSpec found. Run scripts\\run_new_review.py first.")
+        sys.exit(1)
+
+    spec = ReviewSpec(**json.loads(row["spec_json"]))
+    print("Using spec: {0}".format(spec.review_title))
     results = run_search(spec)
 
     print("\n=== Summary ===")

@@ -1,6 +1,7 @@
 import json
 from src.llm import call_llm_json
 from src.db.db_helper import get_source, get_conn
+from src.schemas import ReviewSpec
 
 
 SYSTEM_PROMPT = (
@@ -10,24 +11,6 @@ SYSTEM_PROMPT = (
     "Do NOT invent information not present in the source. "
     "If a field is not available, use null or an empty list."
 )
-
-REVIEW_SECTIONS = """The review has the following sections:
-- Section 1: Introduction (depression background and JS1-1-01 overview)
-- Section 2: Discovery and preclinical studies of JS1-1-01
-- Section 3: Clinical development history of JS1-1-01
-- Section 4: Future prospects and challenges of JS1-1-01
-
-Apply ALL of the following rules that match the source. A source can belong to MULTIPLE sections. Do NOT pick just one.
-
-Rules:
-1. Every registered clinical trial of JS1-1-01 MUST be assigned to Section 3 (it is a timeline event).
-2. A trial that is NOT completed, OR that has notable methodological uncertainty (small sample, single site, unvalidated endpoint), MUST ALSO be assigned to Section 4.
-3. A Phase 1 or Phase 1b safety/PK trial in healthy subjects MUST ALSO be assigned to Section 2 (it bridges preclinical and clinical).
-4. A background epidemiology, depression etiology, or biomarker paper MUST be assigned to Section 1.
-5. A preclinical or animal-model study of SNDRI-class drugs or antidepressant mechanisms MUST be assigned to Section 2.
-6. A review of unmet needs, future directions, or antidepressant development challenges MUST be assigned to Section 4.
-
-Use ONLY section numbers from the list. Be inclusive when a rule matches."""
 
 CLINICALTRIAL_PROMPT = """Extract structured information from this clinical trial registration.
 
@@ -87,27 +70,53 @@ Output JSON in this exact format:
 Output ONLY JSON."""
 
 
-def extract_clinicaltrial(source_id: str) -> dict:
+def build_review_sections_block(spec: ReviewSpec) -> str:
+    lines = ["The review has the following sections:"]
+    for s in spec.sections:
+        lines.append("- Section {0}: {1} -- {2}".format(s.number, s.title, s.focus))
+    lines.append("")
+    lines.append(
+        "Assign each source to the review section(s) it DIRECTLY supports. "
+        "A source can belong to MULTIPLE sections. Be strict: most sources support only 1-2 sections. "
+        "Use ONLY section numbers from the list above. Do NOT invent section numbers."
+    )
+    core = ", ".join(spec.core_entities) if spec.core_entities else "(none specified)"
+    lines.append("Core entities of this review: {0}".format(core))
+    return "\n".join(lines)
+
+
+def _load_latest_spec() -> ReviewSpec:
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT spec_json FROM review_specs ORDER BY id DESC LIMIT 1")
+    row = cur.fetchone()
+    conn.close()
+    if row is None:
+        raise ValueError("No ReviewSpec in DB")
+    return ReviewSpec(**json.loads(row["spec_json"]))
+
+
+def extract_clinicaltrial(source_id: str, spec: ReviewSpec) -> dict:
     source = get_source(source_id)
     if source is None:
         return {"error": "source not found", "source_id": source_id}
 
     trial_json = json.dumps(source, ensure_ascii=False, indent=2)
     prompt = CLINICALTRIAL_PROMPT.format(
-        review_sections=REVIEW_SECTIONS,
+        review_sections=build_review_sections_block(spec),
         trial_json=trial_json,
         source_id=source_id,
     )
     return call_llm_json(prompt, system=SYSTEM_PROMPT, temperature=0.1)
 
 
-def extract_pubmed(source_id: str) -> dict:
+def extract_pubmed(source_id: str, spec: ReviewSpec) -> dict:
     source = get_source(source_id)
     if source is None:
         return {"error": "source not found", "source_id": source_id}
 
     prompt = PUBMED_PROMPT.format(
-        review_sections=REVIEW_SECTIONS,
+        review_sections=build_review_sections_block(spec),
         title=source.get("title", ""),
         journal=source.get("journal", ""),
         year=source.get("year", ""),
@@ -133,11 +142,14 @@ def save_extracted(source_id: str, extracted: dict) -> bool:
         return False
 
 
-def extract_and_save(source_id: str) -> dict:
+def extract_and_save(source_id: str, spec: ReviewSpec = None) -> dict:
+    if spec is None:
+        spec = _load_latest_spec()
+
     if source_id.startswith("ct_"):
-        result = extract_clinicaltrial(source_id)
+        result = extract_clinicaltrial(source_id, spec)
     elif source_id.startswith("pubmed_"):
-        result = extract_pubmed(source_id)
+        result = extract_pubmed(source_id, spec)
     else:
         result = {"error": "unknown source type", "source_id": source_id}
 
@@ -154,4 +166,3 @@ if __name__ == "__main__":
         print(json.dumps(result, ensure_ascii=False, indent=2))
     else:
         print("Usage: python -m src.agents.extract_info <source_id>")
-        print("Example: python -m src.agents.extract_info ct_NCT06259526")

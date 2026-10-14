@@ -3,12 +3,7 @@ from src.llm import call_llm_json
 from src.db.db_helper import get_conn
 from src.schemas import ReviewSpec
 
-# Sources that must ALWAYS be excluded from ranking regardless of LLM judgment.
-# These are known entity mismatches — different compounds that were mistakenly
-# retrieved for the JS1-1-01 review.
-HARDCODED_DENYLIST = {
-    "pubmed_16958986",  # DOV 216,303 — a different SNDRI compound, not JS1-1-01
-}
+
 SYSTEM_PROMPT = (
     "You are a strict relevance ranker for academic review writing. "
     "Given a section focus and a batch of candidate sources, "
@@ -30,17 +25,17 @@ Candidate sources (batch {batch_index}):
 {sources_block}
 
 For each source, assign a relevance score from 0 to 10:
-- 10 = directly about this review's core entity (JS1-1-01) OR provides the exact evidence this section needs
+- 10 = directly about this review's core entity OR provides the exact evidence this section needs
 - 7-9 = closely related mechanism/class/context that this section must cite
 - 4-6 = useful background but not central
 - 1-3 = tangential, only loosely related
 - 0 = unrelated (e.g. different drug, different disease, different topic)
 
 Flag a source as entity mismatch ONLY if:
-- The source is about a compound that could be CONFUSED with the review's core entity (same drug class AND same indication AND similar naming), OR
+- The source is about a compound that could be CONFUSED with the review's core entity (same class AND same indication AND similar naming), OR
 - The source was mistakenly retrieved as if it were about the core entity itself.
 
-Do NOT flag a source merely because it studies a DIFFERENT drug in the same class. Studies of other SNDRI-class drugs are VALID background sources (Category B) and must NOT be flagged. Examples that should NOT be flagged: toludesvenlafaxine, LPM580153, SKF83959, bupropion.
+Do NOT flag a source merely because it studies a DIFFERENT drug/compound in the same class. Studies of other class members are VALID background sources and must NOT be flagged.
 
 Output JSON in this exact format:
 {{
@@ -51,6 +46,9 @@ Output JSON in this exact format:
 }}
 
 Output ONLY JSON."""
+
+# Populated per-review if needed. Empty for generic use.
+HARDCODED_DENYLIST = set()
 
 
 def _normalize_sections(raw_sections):
@@ -154,12 +152,11 @@ def rank_all(top_n=12, spec: ReviewSpec = None):
         print("[Section {0}] ranking {1} sources...".format(section.number, len(sources)))
         scores, flags = rank_section(spec, section, sources)
 
-        # Filter out entity-mismatched sources
-                # Filter out entity-mismatched sources (LLM flags + hardcoded denylist)
         filtered_scores = {
             sid: v for sid, v in scores.items()
             if sid not in flags and sid not in HARDCODED_DENYLIST
         }
+
         ranked = sorted(
             filtered_scores.items(),
             key=lambda kv: (-kv[1]["score"], kv[0]),
