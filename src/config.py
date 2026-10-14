@@ -20,9 +20,33 @@ DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
 NCBI_API_KEY = os.getenv("NCBI_API_KEY", "")
 NCBI_EMAIL = os.getenv("NCBI_EMAIL", "")
 
+# Supabase / mode (Streamlit secrets first, fallback to env vars)
+SUPABASE_URL = ""
+SUPABASE_KEY = ""
+USE_SUPABASE = False
+
+try:
+    import streamlit as st
+    _secrets_available = True
+except Exception:
+    _secrets_available = False
+
+if _secrets_available:
+    try:
+        SUPABASE_URL = st.secrets.get("SUPABASE_URL", os.getenv("SUPABASE_URL", ""))
+        SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", os.getenv("SUPABASE_KEY", ""))
+        _use_flag = str(st.secrets.get("USE_SUPABASE", os.getenv("USE_SUPABASE", "false"))).lower()
+        USE_SUPABASE = _use_flag == "true"
+    except Exception:
+        # Streamlit is imported but secrets file doesn't exist (local dev without .streamlit/secrets.toml)
+        SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+        SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
+        USE_SUPABASE = os.getenv("USE_SUPABASE", "false").lower() == "true"
+else:
+    SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+    SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
+    USE_SUPABASE = os.getenv("USE_SUPABASE", "false").lower() == "true"
+
 # Validation
 if not DEEPSEEK_API_KEY:
-    raise ValueError("DEEPSEEK_API_KEY is missing in .env")
-
-if not NCBI_EMAIL:
-    print("[WARN] NCBI_EMAIL not set. NCBI requests will use a placeholder email.")
+    raise ValueError("DEEPSEEK_API_KEY is missing")

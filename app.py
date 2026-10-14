@@ -1,6 +1,7 @@
 import json
 from datetime import datetime
 import streamlit as st
+from src.config import USE_SUPABASE
 
 st.set_page_config(page_title="自动化综述撰写平台", layout="wide")
 
@@ -17,7 +18,9 @@ from src.agents.assemble_review import assemble
 init_db()
 
 st.title("自动化综述撰写平台")
+_mode_label = "云端 (Supabase)" if USE_SUPABASE else "本地 (SQLite)"
 st.caption("自然语言指令 → 自动检索 → 自动写作 → 自动核查 → 输出 Markdown 综述")
+st.caption("数据存储：**{0}**".format(_mode_label))
 
 if "spec" not in st.session_state:
     st.session_state.spec = None
