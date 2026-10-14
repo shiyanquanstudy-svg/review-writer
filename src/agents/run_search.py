@@ -2,6 +2,7 @@ from src.agents.plan_search import plan_search
 from src.adapters.pubmed import search_and_fetch
 from src.adapters.clinicaltrials import search_and_parse
 from src.schemas import ReviewSpec
+from src.db.db_helper import save_many_sources, save_search_run
 
 
 def _parse_time_range(time_range: str):
@@ -16,8 +17,8 @@ def _parse_time_range(time_range: str):
     return start + "/01/01", end + "/12/31"
 
 
-def run_search(spec: ReviewSpec) -> dict:
-    """Execute search plan across PubMed and ClinicalTrials.gov."""
+def run_search(spec: ReviewSpec, spec_id: int = None) -> dict:
+    """Execute search plan. Saves all sources to SQLite. Returns dict keyed by task_id."""
     plan = plan_search(spec)
     all_results = {}
 
@@ -34,15 +35,22 @@ def run_search(spec: ReviewSpec) -> dict:
                 mindate, maxdate = _parse_time_range(task.get("time_range", ""))
                 records = search_and_fetch(keywords, max_results, mindate, maxdate)
 
+            # Save to DB
+            saved_count = save_many_sources(records)
+            if spec_id is not None:
+                save_search_run(spec_id, task_id, database, keywords, len(records))
+
             all_results[task_id] = {
                 "purpose": task.get("purpose", ""),
                 "target_sections": task.get("target_sections", []),
                 "database": database,
                 "keywords": keywords,
                 "count": len(records),
+                "saved": saved_count,
                 "records": records,
             }
-            print("[{0}][{1}] {2} records".format(database, task_id, len(records)))
+            print("[{0}][{1}] {2} records, {3} saved".format(
+                database, task_id, len(records), saved_count))
         except Exception as e:
             all_results[task_id] = {"error": str(e), "keywords": keywords}
             print("[{0}][{1}] FAILED: {2}".format(database, task_id, e))
@@ -52,14 +60,18 @@ def run_search(spec: ReviewSpec) -> dict:
 
 if __name__ == "__main__":
     from src.agents.parse_instruction import parse_instruction
+    from src.db.db_helper import init_db
+
+    init_db()
 
     test_instruction = (
-        "帮我撰写一个综述，临床三期抗抑郁药——JS1-1-01片的发展史。"
-        "摘要主要从抑郁症的全球趋势，抑郁症的发病原因，药物研发主要从哪些机制展开，JS1-1-01片的作用机制有哪些创新点。"
-        "1引言介绍抑郁症和JS1-1-01片的基本情况。"
-        "2JS1-1-01片的发现与临床前研究。"
-        "3JS1-1-01片的研发历程。"
-        "4JS1-1-01片的未来前景与挑战。"
+        "Help me write a review on the development history of JS1-1-01, "
+        "a phase 3 antidepressant drug. The abstract should cover global depression trends, "
+        "causes of depression, major antidepressant mechanisms, and JS1-1-01's innovation. "
+        "Section 1: Introduction to depression and JS1-1-01. "
+        "Section 2: Discovery and preclinical studies of JS1-1-01. "
+        "Section 3: Clinical development history of JS1-1-01. "
+        "Section 4: Future prospects and challenges of JS1-1-01."
     )
 
     spec = parse_instruction(test_instruction)
@@ -67,4 +79,5 @@ if __name__ == "__main__":
 
     print("\n=== Summary ===")
     for tid, r in results.items():
-        print("  {0} [{1}]: {2}".format(tid, r.get("database", "?"), r.get("count", "FAILED")))
+        print("  {0} [{1}]: {2} records, {3} saved".format(
+            tid, r.get("database", "?"), r.get("count", "FAILED"), r.get("saved", 0)))
