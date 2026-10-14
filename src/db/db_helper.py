@@ -153,3 +153,22 @@ def get_sources_by_type(source_type: str) -> list:
     rows = [json.loads(r["raw_json"]) for r in cur.fetchall()]
     conn.close()
     return rows
+
+def _ensure_column(table: str, column: str, coltype: str):
+    """Add column if missing. For simple migration on existing DBs."""
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("PRAGMA table_info({0})".format(table))
+    cols = [row[1] for row in cur.fetchall()]
+    if column not in cols:
+        cur.execute("ALTER TABLE {0} ADD COLUMN {1} {2}".format(table, column, coltype))
+        conn.commit()
+        print("Added column {0}.{1}".format(table, column))
+    conn.close()
+
+
+def ensure_schema():
+    """Call this after init_db() to make sure all expected columns exist."""
+    _ensure_column("drafts", "spec_id", "INTEGER")
+    _ensure_column("drafts", "citations_json", "TEXT")
+    _ensure_column("sources", "year", "INTEGER")

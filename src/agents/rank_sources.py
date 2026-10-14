@@ -3,7 +3,12 @@ from src.llm import call_llm_json
 from src.db.db_helper import get_conn
 from src.schemas import ReviewSpec
 
-
+# Sources that must ALWAYS be excluded from ranking regardless of LLM judgment.
+# These are known entity mismatches — different compounds that were mistakenly
+# retrieved for the JS1-1-01 review.
+HARDCODED_DENYLIST = {
+    "pubmed_16958986",  # DOV 216,303 — a different SNDRI compound, not JS1-1-01
+}
 SYSTEM_PROMPT = (
     "You are a strict relevance ranker for academic review writing. "
     "Given a section focus and a batch of candidate sources, "
@@ -59,7 +64,6 @@ def _normalize_sections(raw_sections):
 
 
 def load_grouped_sources():
-    """Returns {section_number: [{"source_id":..., "extracted":{...}, "title":...}]}"""
     conn = get_conn()
     cur = conn.cursor()
     cur.execute("""
@@ -146,8 +150,14 @@ def rank_all(top_n=12, spec: ReviewSpec = None):
         print("[Section {0}] ranking {1} sources...".format(section.number, len(sources)))
         scores, flags = rank_section(spec, section, sources)
 
+        # Filter out entity-mismatched sources
+                # Filter out entity-mismatched sources (LLM flags + hardcoded denylist)
+        filtered_scores = {
+            sid: v for sid, v in scores.items()
+            if sid not in flags and sid not in HARDCODED_DENYLIST
+        }
         ranked = sorted(
-            scores.items(),
+            filtered_scores.items(),
             key=lambda kv: (-kv[1]["score"], kv[0]),
         )[:top_n]
 
